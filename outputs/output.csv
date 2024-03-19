@@ -1,0 +1,2 @@
+MODEL_PATH,PROPERTY_PATH,VER_HEURISTIC,IS_VERIFIED,TIME
+models/test_model.onnx,properties/test_property.smt2,overapprox,True,19.873695125002996

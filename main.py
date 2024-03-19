@@ -1,50 +1,33 @@
 import argparse
-import onnx
-import logging
+import os
 import time
+import configparser
 
 import pynever.networks as pyn_networks
 import pynever.strategies.conversion as pyn_conv
 import pynever.strategies.verification as pyn_ver
-import utilities as utils
+import onnx
+
+import utilities
 
 
 def make_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser("Neural Network Verifier for the AIDOaRt Project")
-    parser.add_argument("--model_path", type=str, default="models/VC_FE=[32-64-128-256-512-1024]_C=[64-32].onnx",
-                        help="Path to the ONNX file containing the Neural Network to verify")
-    parser.add_argument("--property_path", type=str, default="properties/VC_FE=[32-64-128-256-512-1024]"
-                                                             "_C=[64-32]_CLS_e=0.1.smtlib",
-                        help="Path to the smtlib file containing the property of interest.")
-    parser.add_argument("--ver_heuristic", type=str, default="overapprox",
-                        help="Verification heuristic to apply to the network and property of interest."
-                             "Should be one among 'overapprox', 'mixed', 'complete'.")
-    parser.add_argument("--logs_path", type=str, default="logs/ver_logs.csv", help="Filepath to the logs file.")
+
+    model_path_help = "Path to the ONNX file containing the Neural Network to verify."
+    parser.add_argument("--model_path", type=str, help=model_path_help, default="models/test_model.onnx")
+
+    property_path_help = "Path to the .smt2 file containing the property of interest."
+    parser.add_argument("--property_path", type=str, help=property_path_help, default="properties/test_property.smt2")
+
+    output_path_help = "Path to the Plain Text file that will contain the results of the verification process."
+    parser.add_argument("--output_path", type=str, help=output_path_help, default="outputs/output.csv")
+
+    config_path_help = "Path to the .ini file containing the configuration info for the script."
+    parser.add_argument("--config_path", type=str, help=config_path_help, default="configs/default_config.ini")
 
     return parser
-
-
-def instantiate_logger(filepath: str):
-
-    logger_path = filepath
-
-    stream_logger = logging.getLogger("pynever.strategies.verification")
-    file_logger = logging.getLogger("Log File")
-
-    stream_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler(logger_path, 'a+')
-
-    stream_handler.setLevel(logging.INFO)
-    file_handler.setLevel(logging.INFO)
-
-    stream_logger.addHandler(stream_handler)
-    file_logger.addHandler(file_handler)
-
-    stream_logger.setLevel(logging.INFO)
-    file_logger.setLevel(logging.INFO)
-
-    return stream_logger, file_logger
 
 
 if __name__ == "__main__":
@@ -59,11 +42,22 @@ if __name__ == "__main__":
     property_path = args.property_path
     property_id = property_path.split('/')[-1].replace('.smtlib', '')
 
-    ver_heuristic = args.ver_heuristic
-    logs_path = args.logs_path
+    output_path = args.output_path
+    config_path = args.config_path
+
+    # Extract configuration info.
+    config = configparser.ConfigParser()
+    _ = config.read(config_path)
+
+    ver_heuristic = config["DEFAULT"]["ver_heuristic"]
+    verbose = config["DEFAULT"].getboolean("verbose")
 
     # Instantiate loggers.
-    stream_log, file_log = instantiate_logger(logs_path)
+    if not os.path.exists(output_path):
+        stream_log, file_log = utilities.instantiate_logger(output_path)
+        file_log.info("MODEL_PATH,PROPERTY_PATH,VER_HEURISTIC,IS_VERIFIED,TIME")
+    else:
+        stream_log, file_log = utilities.instantiate_logger(output_path)
 
     # Load the model in the pynever format.
     onnx_net = pyn_conv.ONNXNetwork(model_id, onnx.load(model_path))
@@ -78,9 +72,9 @@ if __name__ == "__main__":
         raise NotImplementedError
 
     # Check if the model contains a convolutional feature extractor
-    if utils.is_convolutional(pyn_net):
+    if utilities.is_convolutional(pyn_net):
         # if so, isolate the classifier from the feature extractor
-        pyn_net_to_verify = utils.extract_cls(pyn_net)
+        pyn_net_to_verify = utilities.extract_cls(pyn_net)
     else:
         # otherwise keep the network as it is.
         pyn_net_to_verify = pyn_net
@@ -89,7 +83,7 @@ if __name__ == "__main__":
     never_prop = pyn_ver.NeVerProperty()
     never_prop.from_smt_file(property_path)
 
-    stream_log.info(f"Verifying Model {pyn_net_to_verify.identifier} and Property {property_id}...")
+    stream_log.info(f"Verifying Model {model_path} and Property {property_path}...")
 
     # We prepare the verification strategy with the verification heuristic chosen.
     ver_strategy = pyn_ver.NeverVerification(heuristic=ver_heuristic)
@@ -99,4 +93,4 @@ if __name__ == "__main__":
     end = time.perf_counter()
 
     stream_log.info(f"Verification Result: {is_verified}")
-    file_log.info(f"{model_path},{property_path},{is_verified},{end - start}")
+    file_log.info(f"{model_path},{property_path},{ver_heuristic},{is_verified},{end - start}")
